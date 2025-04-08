@@ -2,7 +2,7 @@
 
 A VS Code-like Python editing and execution panel for Houdini, featuring syntax highlighting, code completion, and a clean dark theme interface.
 
-![Houdini Python Panel]![code](https://github.com/user-attachments/assets/90b7f907-da37-4e7b-95d4-0e953a7b7323)
+[code](https://github.com/user-attachments/assets/90b7f907-da37-4e7b-95d4-0e953a7b7323)
 )
 
 
