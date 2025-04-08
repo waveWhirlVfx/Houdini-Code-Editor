@@ -5,7 +5,9 @@ import io
 import time
 import traceback
 import code
+import re
 from PySide2 import QtCore, QtWidgets, QtGui
+import webbrowser
 
 # -------------------------------
 # Syntax Highlighting
@@ -62,7 +64,7 @@ class LineNumberArea(QtWidgets.QWidget):
         self.codeEditor.lineNumberAreaPaintEvent(event)
 
 # -------------------------------
-# Python Code Editor with Enhancements
+# Python Code Editor with Enhanced Auto-Completion
 # -------------------------------
 class PythonCodeEditor(QtWidgets.QPlainTextEdit):
     run_requested = QtCore.Signal()
@@ -75,21 +77,19 @@ class PythonCodeEditor(QtWidgets.QPlainTextEdit):
         self.updateRequest.connect(self.updateLineNumberArea)
         self.cursorPositionChanged.connect(self.highlightCurrentLine)
 
-        # Set base style and highlighter
+        # Always use dark theme.
         self.setStyleSheet("background-color: #272822; color: #f8f8f2;")
         PythonHighlighter(self.document())
 
-        # Code completion
-        self.completion_prefix = ''
-        keywords = [
+        # Static completions: Python keywords and Houdini-related names.
+        self.static_completions = [
             "and", "as", "assert", "break", "class", "continue", "def", "del",
             "elif", "else", "except", "False", "finally", "for", "from", "global",
             "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or",
             "pass", "raise", "return", "True", "try", "while", "with", "yield",
-            # Sample Houdini module names:
-            "hou", "node", "parm", "geometry", "obj", "sop"
+            "hou", "node", "parm", "geometry", "obj", "sop", "networkEditor", "ui"
         ]
-        self.completer = QtWidgets.QCompleter(keywords, self)
+        self.completer = QtWidgets.QCompleter(self.static_completions, self)
         self.completer.setWidget(self)
         self.completer.setCompletionMode(QtWidgets.QCompleter.PopupCompletion)
         self.completer.activated.connect(self.insertCompletion)
@@ -112,7 +112,6 @@ class PythonCodeEditor(QtWidgets.QPlainTextEdit):
             if filepath.endswith('.py'):
                 with open(filepath, 'r') as f:
                     self.setPlainText(f.read())
-                # Emit info to the parent console if needed.
         event.acceptProposedAction()
 
     # --- Line Numbers ---
@@ -144,7 +143,6 @@ class PythonCodeEditor(QtWidgets.QPlainTextEdit):
         blockNumber = block.blockNumber()
         top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
         bottom = top + int(self.blockBoundingRect(block).height())
-
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 number = str(blockNumber + 1)
@@ -159,8 +157,6 @@ class PythonCodeEditor(QtWidgets.QPlainTextEdit):
     # --- Current Line & Bracket Matching ---
     def highlightCurrentLine(self):
         extraSelections = []
-
-        # Current line highlight
         if not self.isReadOnly():
             selection = QtWidgets.QTextEdit.ExtraSelection()
             lineColor = QtGui.QColor("#49483e")
@@ -169,8 +165,6 @@ class PythonCodeEditor(QtWidgets.QPlainTextEdit):
             selection.cursor = self.textCursor()
             selection.cursor.clearSelection()
             extraSelections.append(selection)
-
-        # Bracket matching
         cursor = self.textCursor()
         prev_char = self.document().characterAt(cursor.position() - 1)
         next_char = self.document().characterAt(cursor.position())
@@ -195,7 +189,6 @@ class PythonCodeEditor(QtWidgets.QPlainTextEdit):
             sel.cursor.setPosition(pos)
             sel.cursor.movePosition(QtGui.QTextCursor.NextCharacter, QtGui.QTextCursor.KeepAnchor)
             extraSelections.append(sel)
-
         self.setExtraSelections(extraSelections)
 
     def findMatchingBracket(self, pos, forward=True):
@@ -224,7 +217,7 @@ class PythonCodeEditor(QtWidgets.QPlainTextEdit):
                         return i
         return None
 
-    # --- Code Completion ---
+    # --- Code Completion with Dynamic Introspection ---
     def insertCompletion(self, completion):
         tc = self.textCursor()
         extra = len(completion) - len(self.completion_prefix)
@@ -237,23 +230,19 @@ class PythonCodeEditor(QtWidgets.QPlainTextEdit):
         tc.select(QtGui.QTextCursor.WordUnderCursor)
         return tc.selectedText()
 
-    # --- Auto-Indentation and Key Handling ---
     def keyPressEvent(self, event):
-        # Check for Ctrl+Enter to run code
         if event.key() == QtCore.Qt.Key_Return and (event.modifiers() & QtCore.Qt.ControlModifier):
             self.run_requested.emit()
             return
 
-        # Auto-completion trigger (if the completion popup is visible, let it handle navigation)
         if self.completer.popup() and self.completer.popup().isVisible():
-            if event.key() in (QtCore.Qt.Key_Enter, QtCore.Qt.Key_Return, QtCore.Qt.Key_Escape,
-                               QtCore.Qt.Key_Tab, QtCore.Qt.Key_Backtab):
+            if event.key() in (QtCore.Qt.Key_Enter, QtCore.Qt.Key_Return,
+                               QtCore.Qt.Key_Escape, QtCore.Qt.Key_Tab, QtCore.Qt.Key_Backtab):
                 event.ignore()
                 return
 
         super(PythonCodeEditor, self).keyPressEvent(event)
 
-        # Auto-indent if Return is pressed
         if event.key() == QtCore.Qt.Key_Return:
             cursor = self.textCursor()
             blockText = cursor.block().previous().text()
@@ -266,14 +255,36 @@ class PythonCodeEditor(QtWidgets.QPlainTextEdit):
             cursor.insertText(indent)
             self.setTextCursor(cursor)
 
-        # Handle completion: show the completer when a dot or a letter is typed
-        completionPrefix = self.textUnderCursor()
-        if len(completionPrefix) >= 1:
+        cursor = self.textCursor()
+        cursor.select(QtGui.QTextCursor.LineUnderCursor)
+        line_text = cursor.selectedText()
+        col = self.textCursor().positionInBlock()
+        prefix_expr = line_text[:col]
+
+        match = re.search(r'(.+)\.(\w*)$', prefix_expr)
+        if match:
+            expr = match.group(1).strip()
+            self.completion_prefix = match.group(2)
+            suggestions = []
+            try:
+                evaluated = eval(expr, globals())
+                suggestions = [attr for attr in dir(evaluated) if not attr.startswith("_")]
+            except Exception:
+                suggestions = []
+            if suggestions:
+                self.completer.model().setStringList(suggestions)
+            else:
+                self.completer.model().setStringList(self.static_completions)
+        else:
+            completionPrefix = self.textUnderCursor()
             self.completion_prefix = completionPrefix
-            self.completer.setCompletionPrefix(completionPrefix)
+            self.completer.model().setStringList(self.static_completions)
+
+        if len(self.completion_prefix) >= 1:
+            self.completer.setCompletionPrefix(self.completion_prefix)
             cr = self.cursorRect()
-            cr.setWidth(self.completer.popup().sizeHintForColumn(0)
-                        + self.completer.popup().verticalScrollBar().sizeHint().width())
+            cr.setWidth(self.completer.popup().sizeHintForColumn(0) +
+                        self.completer.popup().verticalScrollBar().sizeHint().width())
             self.completer.complete(cr)
         else:
             self.completer.popup().hide()
@@ -286,8 +297,8 @@ class OutputConsole(QtWidgets.QTextEdit):
         super(OutputConsole, self).__init__(parent)
         self.setReadOnly(True)
         self.setStyleSheet("""
-            background-color: #1e1e1e; 
-            color: #e6e6e6; 
+            background-color: #1e1e1e;
+            color: #e6e6e6;
             font-family: Consolas, monospace;
             border: 1px solid #333;
             padding: 5px;
@@ -301,7 +312,7 @@ class OutputConsole(QtWidgets.QTextEdit):
         self.ensureCursorVisible()
 
 # -------------------------------
-# Main Panel with Tabs, Find/Replace, Themes, Autosave, etc.
+# Main Panel with Improved Layout, Toolbar, and Find/Replace
 # -------------------------------
 class VSCodeLikePanel(QtWidgets.QWidget):
     AUTOSAVE_INTERVAL = 30000  # 30 seconds
@@ -310,93 +321,104 @@ class VSCodeLikePanel(QtWidgets.QWidget):
         super(VSCodeLikePanel, self).__init__(parent)
         self.setWindowTitle("Houdini Python Panel")
         self.resize(1200, 900)
+        
+        # Always use dark theme.
         self.setStyleSheet("""
             QWidget { background-color: #2b2b2b; color: #f8f8f2; font-family: Consolas, monospace; }
-            QPushButton { background-color: #444444; border: 1px solid #555555; padding: 5px; color: #f8f8f2; }
-            QPushButton:hover { background-color: #555555; }
-            QLineEdit { background-color: #3c3c3c; border: 1px solid #555555; padding: 3px; color: #f8f8f2; }
+            QToolBar { background-color: #333333; spacing: 8px; }
+            QToolButton { background: none; border: none; color: #f8f8f2; }
             QTabWidget::pane { border: 1px solid #555555; }
+            QLineEdit { background-color: #3c3c3c; border: 1px solid #555555; padding: 3px; color: #f8f8f2; }
         """)
-
-        # Initialize recent files list and file history
         self.recent_files = []
         self.file_history = {}
 
-        # Create Tab Widget for multiple editors
-        self.tab_widget = QtWidgets.QTabWidget()
-        self.tab_widget.setTabsClosable(True)
-        self.tab_widget.tabCloseRequested.connect(self.closeTab)
-        self.newTab()  # Start with one tab
+        self._createToolBar()
+        self._createFindReplaceWidget()
+        self._createCentralWidgets()
+        self._createStatusBar()
 
-        # Create output console
-        self.output_console = OutputConsole()
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(4)
+        main_layout.addWidget(self.toolBar)
+        main_layout.addWidget(self.findReplaceWidget)
+        main_layout.addWidget(self.centralSplitter)
+        main_layout.addWidget(self.statusBar)
+        self.setLayout(main_layout)
 
-        # Buttons
-        self.run_button = QtWidgets.QPushButton("Run (Ctrl+Enter)")
-        self.run_button.clicked.connect(self.run_code)
+        # Shortcut for toggling find/replace panel.
+        QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+F"), self, activated=self.toggleFindReplace)
 
-        self.clear_output_button = QtWidgets.QPushButton("Clear Output")
-        self.clear_output_button.clicked.connect(self.clear_output)
-
-        self.open_button = QtWidgets.QPushButton("Open")
-        self.open_button.clicked.connect(self.open_file)
-
-        self.save_button = QtWidgets.QPushButton("Save")
-        self.save_button.clicked.connect(self.save_file)
-
-        self.new_tab_button = QtWidgets.QPushButton("New Tab")
-        self.new_tab_button.clicked.connect(self.newTab)
-
-        # Find/Replace panel
-        self.find_line = QtWidgets.QLineEdit()
-        self.find_line.setPlaceholderText("Find")
-        self.replace_line = QtWidgets.QLineEdit()
-        self.replace_line.setPlaceholderText("Replace")
-        self.find_button = QtWidgets.QPushButton("Find Next")
-        self.find_button.clicked.connect(self.find_text)
-        self.replace_button = QtWidgets.QPushButton("Replace")
-        self.replace_button.clicked.connect(self.replace_text)
-
-        find_layout = QtWidgets.QHBoxLayout()
-        find_layout.addWidget(self.find_line)
-        find_layout.addWidget(self.replace_line)
-        find_layout.addWidget(self.find_button)
-        find_layout.addWidget(self.replace_button)
-
-        # Theme selector
-        self.theme_combo = QtWidgets.QComboBox()
-        self.theme_combo.addItems(["Dark", "Light"])
-        self.theme_combo.currentTextChanged.connect(self.change_theme)
-
-        # Button layout
-        button_layout = QtWidgets.QHBoxLayout()
-        button_layout.addWidget(self.run_button)
-        button_layout.addWidget(self.clear_output_button)
-        button_layout.addWidget(self.open_button)
-        button_layout.addWidget(self.save_button)
-        button_layout.addWidget(self.new_tab_button)
-        button_layout.addWidget(QtWidgets.QLabel("Theme:"))
-        button_layout.addWidget(self.theme_combo)
-
-        # Splitter for editor tabs and output console
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        splitter.addWidget(self.tab_widget)
-        splitter.addWidget(self.output_console)
-        splitter.setSizes([700, 300])
-
-        # Main layout
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(button_layout)
-        layout.addLayout(find_layout)
-        layout.addWidget(splitter)
-        self.setLayout(layout)
-
-        # Autosave timer
         self.autosave_timer = QtCore.QTimer(self)
         self.autosave_timer.timeout.connect(self.autosave)
         self.autosave_timer.start(self.AUTOSAVE_INTERVAL)
 
         self.current_file = None
+
+    def _createToolBar(self):
+        self.toolBar = QtWidgets.QToolBar()
+        style = self.style()
+        
+        runAction = QtWidgets.QAction(style.standardIcon(QtWidgets.QStyle.SP_MediaPlay), "Run (Ctrl+Enter)", self)
+        runAction.triggered.connect(self.run_code)
+        openAction = QtWidgets.QAction(style.standardIcon(QtWidgets.QStyle.SP_DialogOpenButton), "Open", self)
+        openAction.triggered.connect(self.open_file)
+        saveAction = QtWidgets.QAction(style.standardIcon(QtWidgets.QStyle.SP_DialogSaveButton), "Save", self)
+        saveAction.triggered.connect(self.save_file)
+        newTabAction = QtWidgets.QAction(style.standardIcon(QtWidgets.QStyle.SP_FileIcon), "New Tab", self)
+        newTabAction.triggered.connect(self.newTab)
+        clearAction = QtWidgets.QAction("Clear Output", self)
+        clearAction.triggered.connect(self.clear_output)
+        # Houdini Help button removed as per request.
+
+        self.toolBar.addAction(runAction)
+        self.toolBar.addAction(openAction)
+        self.toolBar.addAction(saveAction)
+        self.toolBar.addAction(newTabAction)
+        self.toolBar.addAction(clearAction)
+
+    def _createFindReplaceWidget(self):
+        # A widget that allows find and replace; initially hidden.
+        self.findReplaceWidget = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(self.findReplaceWidget)
+        layout.setContentsMargins(4, 4, 4, 4)
+        self.findEdit = QtWidgets.QLineEdit()
+        self.findEdit.setPlaceholderText("Find")
+        self.replaceEdit = QtWidgets.QLineEdit()
+        self.replaceEdit.setPlaceholderText("Replace")
+        self.findNextBtn = QtWidgets.QPushButton("Find Next")
+        self.findNextBtn.clicked.connect(self.find_text)
+        self.replaceBtn = QtWidgets.QPushButton("Replace")
+        self.replaceBtn.clicked.connect(self.replace_text)
+        layout.addWidget(self.findEdit)
+        layout.addWidget(self.replaceEdit)
+        layout.addWidget(self.findNextBtn)
+        layout.addWidget(self.replaceBtn)
+        self.findReplaceWidget.setLayout(layout)
+        self.findReplaceWidget.setVisible(False)
+
+    def toggleFindReplace(self):
+        # Toggle visibility of the find/replace widget.
+        visible = self.findReplaceWidget.isVisible()
+        self.findReplaceWidget.setVisible(not visible)
+
+    def _createCentralWidgets(self):
+        self.tab_widget = QtWidgets.QTabWidget()
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.tabCloseRequested.connect(self.closeTab)
+        self.newTab()  # Start with one tab.
+
+        self.output_console = OutputConsole()
+
+        self.centralSplitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.centralSplitter.addWidget(self.tab_widget)
+        self.centralSplitter.addWidget(self.output_console)
+        self.centralSplitter.setSizes([700, 300])
+
+    def _createStatusBar(self):
+        self.statusBar = QtWidgets.QStatusBar()
+        self.statusBar.showMessage("Ready")
 
     # --- Tab Management ---
     def newTab(self):
@@ -414,7 +436,7 @@ class VSCodeLikePanel(QtWidgets.QWidget):
     def currentEditor(self):
         return self.tab_widget.currentWidget()
 
-    # --- Run Code with Execution Timer ---
+    # --- Code Execution ---
     def run_code(self):
         self.output_console.clear()
         start_time = time.time()
@@ -451,11 +473,12 @@ class VSCodeLikePanel(QtWidgets.QWidget):
             sys.stderr = old_stderr
             elapsed = time.time() - start_time
             self.output_console.write(f"[INFO] Execution time: {elapsed:.3f} seconds")
+            self.statusBar.showMessage(f"Execution finished in {elapsed:.3f} seconds", 5000)
 
     def clear_output(self):
         self.output_console.clear()
 
-    # --- File Open/Save and Recent Files ---
+    # --- File Open/Save ---
     def open_file(self):
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open Python File", "", "Python Files (*.py);;All Files (*)")
         if filename:
@@ -480,21 +503,20 @@ class VSCodeLikePanel(QtWidgets.QWidget):
             self.output_console.write(f"[INFO] Saved file: {self.current_file}")
             self.file_history[self.current_file] = self.currentEditor().toPlainText()
 
-    # --- Find & Replace ---
+    # --- Find & Replace Functions ---
     def find_text(self):
-        text = self.find_line.text()
-        if text:
+        search_text = self.findEdit.text()
+        if search_text:
             editor = self.currentEditor()
-            if not editor.find(text):
-                # if not found, restart from top
+            if not editor.find(search_text):
                 cursor = editor.textCursor()
                 cursor.movePosition(QtGui.QTextCursor.Start)
                 editor.setTextCursor(cursor)
-                editor.find(text)
+                editor.find(search_text)
 
     def replace_text(self):
-        find_str = self.find_line.text()
-        replace_str = self.replace_line.text()
+        find_str = self.findEdit.text()
+        replace_str = self.replaceEdit.text()
         if find_str:
             editor = self.currentEditor()
             content = editor.toPlainText()
@@ -502,48 +524,10 @@ class VSCodeLikePanel(QtWidgets.QWidget):
             editor.setPlainText(new_content)
             self.output_console.write(f"[INFO] Replaced all occurrences of '{find_str}' with '{replace_str}'")
 
-    # --- Theme Switching ---
-    def change_theme(self, theme):
-        if theme == "Dark":
-            self.setStyleSheet("""
-                QWidget { background-color: #2b2b2b; color: #f8f8f2; font-family: Consolas, monospace; }
-                QPushButton { background-color: #444444; border: 1px solid #555555; padding: 5px; color: #f8f8f2; }
-                QLineEdit { background-color: #3c3c3c; border: 1px solid #555555; padding: 3px; color: #f8f8f2; }
-                QTabWidget::pane { border: 1px solid #555555; }
-            """)
-            for i in range(self.tab_widget.count()):
-                editor = self.tab_widget.widget(i)
-                editor.setStyleSheet("background-color: #272822; color: #f8f8f2;")
-            self.output_console.setStyleSheet("""
-                background-color: #1e1e1e; 
-                color: #e6e6e6; 
-                font-family: Consolas, monospace;
-                border: 1px solid #333;
-                padding: 5px;
-            """)
-        elif theme == "Light":
-            self.setStyleSheet("""
-                QWidget { background-color: #f0f0f0; color: #000; font-family: Consolas, monospace; }
-                QPushButton { background-color: #ddd; border: 1px solid #aaa; padding: 5px; color: #000; }
-                QLineEdit { background-color: #fff; border: 1px solid #aaa; padding: 3px; color: #000; }
-                QTabWidget::pane { border: 1px solid #aaa; }
-            """)
-            for i in range(self.tab_widget.count()):
-                editor = self.tab_widget.widget(i)
-                editor.setStyleSheet("background-color: #fff; color: #000;")
-            self.output_console.setStyleSheet("""
-                background-color: #eee; 
-                color: #000; 
-                font-family: Consolas, monospace;
-                border: 1px solid #aaa;
-                padding: 5px;
-            """)
-
     # --- Autosave ---
     def autosave(self):
         if self.current_file:
             current_text = self.currentEditor().toPlainText()
-            # Save only if the text has changed from the last saved version
             if self.file_history.get(self.current_file, "") != current_text:
                 with open(self.current_file, 'w') as f:
                     f.write(current_text)
@@ -563,10 +547,3 @@ def destroyInterface():
     if _instance is not None:
         _instance.deleteLater()
         _instance = None
-
-# For testing outside Houdini, uncomment the following lines:
-# if __name__ == "__main__":
-#     app = QtWidgets.QApplication(sys.argv)
-#     interface = createInterface()
-#     interface.show()
-#     sys.exit(app.exec_())
