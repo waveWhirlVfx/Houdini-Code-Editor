@@ -1,52 +1,77 @@
-# Houdini Python Code Editor
+# Houdini Python Panel
 
-## Overview
+A VS Code-like Python editing and execution panel for Houdini, featuring syntax highlighting, code completion, and a clean dark theme interface.
 
-This is a robust, VSCode-inspired Python code editor specifically designed for Houdini, featuring a rich set of development tools to enhance your scripting experience. The editor provides an integrated development environment (IDE) with syntax highlighting, line numbering, code completion, and direct code execution within Houdini.
+![Houdini Python Panel](![image](https://github.com/user-attachments/assets/21b6662f-e31b-41a8-9d0b-e6ae70dd71ed)
+)
 
 ## Features
 
-### Code Editor Capabilities
-- Syntax highlighting for Python and Houdini-specific keywords
-- Line number display
-- Drag and drop file support
-- Bracket matching
-- Auto-indentation
-- Code completion for Python and Houdini modules
+- **Code Editor with Syntax Highlighting**: Python code highlighting with Monokai-inspired dark theme
+- **Line Numbers**: Visual indication of line position in code
+- **Auto-completion**: Context-aware code completion for Python and Houdini-specific objects
+- **Bracket Matching**: Highlights matching brackets for better code navigation
+- **File Management**: Open, save, and autosave capabilities
+- **Tab System**: Multiple files open simultaneously with tabbed interface
+- **Find & Replace**: Search through your code with Ctrl+F
+- **Output Console**: View execution results and errors
+- **Run Code**: Execute Python code directly in Houdini with Ctrl+Enter
+- **Drag & Drop**: Support for dragging .py files into the editor
 
-### IDE-like Functionalities
-- Multiple tab support
-- Find and replace functionality
-- Theme switching (Dark/Light)
-- Autosave
-- Integrated output console
-- Code execution timer
-- Error tracking and display
+## Usage
 
-## Requirements
-- Houdini (version 18.0 or later recommended)
-- PySide2
-- Python 3.x
+### Basic Operation
 
-## Installation
+- **Run Code**: Press Ctrl+Enter or click the Play button
+- **New Tab**: Create a new editor tab
+- **Open File**: Load a Python file into the editor
+- **Save File**: Save your current work
+- **Find/Replace**: Press Ctrl+F to toggle the find/replace panel
+- **Clear Output**: Clear the output console
 
-1. Copy the script into your Houdini scripts directory
-2. Ensure PySide2 is installed
-3. Load the script in Houdini python pannel
+### Auto-completion
+
+The panel provides completion suggestions for:
+- Python keywords
+- Common Houdini modules (hou, node, parm, etc.)
+- Object properties and methods based on context
 
 ### Keyboard Shortcuts
-- `Ctrl + Enter`: Run current code
-- Drag and drop `.py` files directly into the editor
-- Tab creation and navigation
 
-### Code Execution
-- Write your Python code in the editor
-- Click "Run" or use `Ctrl + Enter`
-- View output and execution time in the console
-
-## Themes
-Switch between Dark and Light themes using the theme dropdown.
+- **Ctrl+Enter**: Execute code
+- **Ctrl+F**: Toggle find/replace panel
+- **Ctrl+S**: Save file (implied, not explicitly defined in code)
 
 ## Autosave
-Files are automatically saved every 30 seconds to prevent data loss.
 
+The panel automatically saves your work every 30 seconds if changes are detected. This helps prevent loss of work in case of unexpected issues.
+
+## Customization
+
+You can modify the source code to customize aspects like:
+- Syntax highlighting colors
+- Default editor font
+- Theme colors
+- Autosave interval
+
+## Requirements
+
+- Houdini (tested with Houdini 20.x)
+- PySide2 (included with Houdini)
+
+## Development
+
+To contribute to this project:
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+## License
+
+[MIT License](LICENSE)
+
+## Acknowledgments
+
+- Inspired by the VS Code interface
+- Built on PySide2/Qt for UI components
